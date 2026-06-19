@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentReview — Behavioral Diff for Prompt Changes</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #7d8590;
+    --green: #3fb950;
+    --green-bg: rgba(63,185,80,0.12);
+    --orange: #d29922;
+    --orange-bg: rgba(210,153,34,0.12);
+    --red: #f85149;
+    --red-bg: rgba(248,81,73,0.12);
+    --blue: #58a6ff;
+    --blue-bg: rgba(88,166,255,0.10);
+    --accent: #1f6feb;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; line-height: 1.6; }
+
+  /* Header */
+  header { border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+  .logo { font-size: 18px; font-weight: 700; color: var(--text); }
+  .logo span { color: var(--blue); }
+  .badge { background: var(--accent); color: white; font-size: 10px; padding: 2px 8px; border-radius: 20px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  header .right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .score-header { font-size: 13px; color: var(--muted); }
+  .score-value { font-size: 24px; font-weight: 700; color: var(--orange); }
+
+  /* Layout */
+  .main { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 57px); }
+
+  /* Sidebar */
+  .sidebar { border-right: 1px solid var(--border); padding: 16px 0; overflow-y: auto; }
+  .sidebar-section { padding: 0 16px 8px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-top: 12px; }
+  .scenario-item { padding: 10px 16px; cursor: pointer; border-left: 3px solid transparent; transition: all 0.15s; display: flex; align-items: center; gap: 10px; }
+  .scenario-item:hover { background: var(--surface); }
+  .scenario-item.active { background: var(--surface); border-left-color: var(--blue); }
+  .scenario-item .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot.green { background: var(--green); }
+  .dot.orange { background: var(--orange); }
+  .dot.red { background: var(--red); }
+  .scenario-title { font-size: 13px; color: var(--text); line-height: 1.3; }
+  .scenario-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* Summary bar */
+  .summary-bar { padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; gap: 20px; align-items: center; }
+  .summary-item { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  .count { font-weight: 700; font-size: 15px; }
+  .c-green { color: var(--green); }
+  .c-orange { color: var(--orange); }
+  .c-red { color: var(--red); }
+  .progress-wrap { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; display: flex; }
+  .progress-green { background: var(--green); }
+  .progress-orange { background: var(--orange); }
+  .progress-red { background: var(--red); }
+
+  /* Content */
+  .content { padding: 24px; overflow-y: auto; }
+  .run-header { margin-bottom: 20px; }
+  .run-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .run-meta { font-size: 12px; color: var(--muted); }
+
+  /* Prompt cards */
+  .prompts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .prompt-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .prompt-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .prompt-label .tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+  .tag-a { background: var(--blue-bg); color: var(--blue); }
+  .tag-b { background: var(--orange-bg); color: var(--orange); }
+  .prompt-text { font-size: 13px; color: var(--text); font-family: "SF Mono", "Fira Code", monospace; white-space: pre-wrap; background: var(--bg); border-radius: 4px; padding: 10px; border: 1px solid var(--border); }
+
+  /* Scenario viewer */
+  .scenario-panel { display: none; }
+  .scenario-panel.visible { display: block; }
+  .scenario-question { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  .question-label { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; margin-bottom: 4px; }
+  .question-text { font-size: 14px; color: var(--text); font-style: italic; }
+
+  .diff-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .response-card { border-radius: 8px; border: 1px solid var(--border); overflow: hidden; }
+  .response-card.green-card { border-color: var(--green); }
+  .response-card.orange-card { border-color: var(--orange); }
+  .response-card.red-card { border-color: var(--red); }
+  .response-header { padding: 10px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .response-header.a-header { background: var(--blue-bg); color: var(--blue); }
+  .response-header.b-header { background: var(--orange-bg); color: var(--orange); }
+  .response-body { padding: 14px; font-size: 13px; color: var(--text); line-height: 1.7; background: var(--surface); }
+  .diff-highlight { background: rgba(248,81,73,0.15); border-radius: 3px; padding: 1px 3px; }
+  .diff-add { background: rgba(63,185,80,0.15); border-radius: 3px; padding: 1px 3px; }
+
+  /* Verdict */
+  .verdict { border-radius: 8px; padding: 14px 16px; margin-bottom: 20px; display: flex; align-items: flex-start; gap: 12px; }
+  .verdict.green { background: var(--green-bg); border: 1px solid var(--green); }
+  .verdict.orange { background: var(--orange-bg); border: 1px solid var(--orange); }
+  .verdict.red { background: var(--red-bg); border: 1px solid var(--red); }
+  .verdict-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+  .verdict-text .label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 3px; }
+  .verdict.green .label { color: var(--green); }
+  .verdict.orange .label { color: var(--orange); }
+  .verdict.red .label { color: var(--red); }
+  .verdict-text .detail { font-size: 13px; color: var(--text); }
+
+  /* Stats */
+  .stats-row { display: flex; gap: 12px; margin-bottom: 24px; }
+  .stat-chip { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; font-size: 12px; color: var(--muted); }
+  .stat-chip span { color: var(--text); font-weight: 600; }
+
+  /* Setup panel */
+  .setup-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+  .setup-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .setup-sub { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+  .code-block { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; font-family: monospace; font-size: 12px; color: var(--green); margin-bottom: 10px; }
+  .step { display: flex; gap: 10px; margin-bottom: 10px; align-items: flex-start; }
+  .step-num { background: var(--accent); color: white; border-radius: 50%; width: 20px; height: 20px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+  .step-text { font-size: 13px; color: var(--text); padding-top: 1px; }
+  .step-text code { background: var(--border); padding: 1px 5px; border-radius: 3px; font-family: monospace; font-size: 12px; }
+
+  /* Empty state */
+  .empty { padding: 60px 24px; text-align: center; color: var(--muted); }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-title { font-size: 16px; color: var(--text); font-weight: 600; margin-bottom: 6px; }
+
+  /* Nav tabs */
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); padding: 0 24px; }
+  .tab { padding: 10px 16px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--muted); }
+  .tab.active { color: var(--text); border-bottom-color: var(--blue); }
+  .tab:hover { color: var(--text); }
+  .tab-content { display: none; }
+  .tab-content.visible { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Agent<span>Review</span></div>
+  <div class="badge">Demo Mode</div>
+  <div class="right">
+    <div>
+      <div class="score-header">Overall Change Score</div>
+      <div class="score-value">62%</div>
+    </div>
+  </div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('diff')">🔍 Behavioral Diff</div>
+  <div class="tab" onclick="switchTab('setup')">⚙️ Connect Your Agent</div>
+</div>
+
+<div class="tab-content visible" id="tab-diff">
+  <div class="main">
+    <div class="sidebar">
+      <div class="sidebar-section">Comparison Run</div>
+      <div style="padding: 8px 16px; font-size: 12px; color: var(--muted);">
+        <strong style="color:var(--text)">v1 → v2</strong> · Jun 19 2026 · 8 scenarios
+      </div>
+
+      <div class="sidebar-section" style="margin-top:16px;">Scenarios</div>
+
+      <div class="scenario-item active" onclick="showScenario(0)" id="s0">
+        <div class="dot orange"></div>
+        <div>
+          <div class="scenario-title">Explain vector database</div>
+          <div class="scenario-label">Minor shift</div>
+        </div>
+      </div>
+
+      <div class="scenario-item" onclick="showScenario(1)" id="s1">
+        <div class="dot orange"></div>
+        <div>
+          <div class="scenario-title">LLM production risks</div>
+          <div class="scenario-label">Minor shift</div>
+        </div>
+      </div>
+
+      <div class="scenario-item" onclick="showScenario(2)" id="s2">
+        <div class="dot green"></div>
+        <div>
+          <div class="scenario-title">Debug NameError: 'x'</div>
+          <div class="scenario-label">No divergence</div>
+        </div>
+      </div>
+
+      <div class="scenario-item" onclick="showScenario(3)" id="s3">
+        <div class="dot red"></div>
+        <div>
+          <div class="scenario-title">Learn React in 1 week</div>
+          <div class="scenario-label">⚠ Major divergence</div>
+        </div>
+      </div>
+
+      <div class="scenario-item" onclick="showScenario(4)" id="s4">
+        <div class="dot orange"></div>
+        <div>
+          <div class="scenario-title">RAG vs fine-tuning</div>
+          <div class="scenario-label">Minor shift</div>
+        </div>
+      </div>
+
+      <div class="scenario-item" onclick="showScenario(5)" id="s5">
+        <div class="dot green"></div>
+        <div>
+          <div class="scenario-title">Prompt injection summary</div>
+          <div class="scenario-label">No divergence</div>
+        </div>
+      </div>
+
+      <div class="scenario-item" onclick="showScenario(6)" id="s6">
+        <div class="dot red"></div>
+        <div>
+          <div class="scenario-title">PostgreSQL vs MongoDB</div>
+          <div class="scenario-label">⚠ Major divergence</div>
+        </div>
+      </div>
+
+      <div class="scenario-item" onclick="showScenario(7)" id="s7">
+        <div class="dot green"></div>
+        <div>
+          <div class="scenario-title">Parse CSV in Python</div>
+          <div class="scenario-label">No divergence</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="overflow-y:auto;">
+      <div class="summary-bar">
+        <div class="summary-item">
+          <div class="count c-green">3</div>
+          <div>✅ No change</div>
+        </div>
+        <div class="summary-item">
+          <div class="count c-orange">3</div>
+          <div>🟡 Minor shift</div>
+        </div>
+        <div class="summary-item">
+          <div class="count c-red">2</div>
+          <div>🔴 Major divergence</div>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-green" style="width:37.5%"></div>
+          <div class="progress-orange" style="width:37.5%"></div>
+          <div class="progress-red" style="width:25%"></div>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="prompts">
+          <div class="prompt-card">
+            <div class="prompt-label"><span class="tag tag-a">Prompt A (v1)</span></div>
+            <div class="prompt-text">You are a helpful assistant. Be thorough and complete in your answers. Cover edge cases and include examples where relevant.</div>
+          </div>
+          <div class="prompt-card">
+            <div class="prompt-label"><span class="tag tag-b">Prompt B (v2)</span></div>
+            <div class="prompt-text">You are a helpful assistant. Be concise. End every response with "Let me know if you need more detail."</div>
+          </div>
+        </div>
+
+        <!-- Scenario 0: Vector DB -->
+        <div class="scenario-panel visible" id="panel-0">
+          <div class="scenario-question">
+            <div class="question-label">Test scenario 1 / 8</div>
+            <div class="question-text">"Explain what a vector database is."</div>
+          </div>
+          <div class="verdict orange">
+            <div class="verdict-icon">🟡</div>
+            <div class="verdict-text">
+              <div class="label">Minor Behavioral Shift</div>
+              <div class="detail">Prompt B produces a factually accurate but shorter answer. Drops the "how indexing works" section and the concrete example with cosine similarity. Core concept correct, but depth reduced by ~40%.</div>
+            </div>
+          </div>
+          <div class="diff-row">
+            <div class="response-card orange-card">
+              <div class="response-header a-header">Prompt A (v1) <span style="font-weight:400;opacity:.7">784 tokens</span></div>
+              <div class="response-body">A vector database stores data as high-dimensional numerical vectors, allowing similarity search instead of exact keyword matching.<br><br>Unlike traditional databases that match exact values, vector DBs find "nearest neighbors" — items that are semantically similar even if they share no keywords.<br><br><strong>How it works:</strong> Each piece of content (text, image, audio) is converted to a vector via an embedding model. The database indexes these vectors using algorithms like HNSW or IVF for fast approximate nearest-neighbor search.<br><br><strong>Example:</strong> Searching for "happy" might surface documents containing "joyful", "elated", or "cheerful" because their vector representations are close in high-dimensional space (low cosine distance).<br><br><strong>Common use cases:</strong> semantic search, RAG pipelines, recommendation systems, image similarity search.</div>
+            </div>
+            <div class="response-card orange-card">
+              <div class="response-header b-header">Prompt B (v2) <span style="font-weight:400;opacity:.7">312 tokens</span></div>
+              <div class="response-body">A vector database stores data as high-dimensional numerical vectors and enables similarity search — finding items that are semantically related, not just keyword-matched.<br><br>Common use cases include semantic search, RAG pipelines, and recommendation systems. Popular options include Pinecone, Weaviate, and pgvector (Postgres extension).<br><br><span class="diff-highlight">Let me know if you need more detail.</span></div>
+            </div>
+          </div>
+          <div class="stats-row">
+            <div class="stat-chip">Token delta: <span>-60%</span></div>
+            <div class="stat-chip">Factual accuracy: <span>✅ Both correct</span></div>
+            <div class="stat-chip">Missing in B: <span>HNSW/IVF explanation, cosine similarity example</span></div>
+          </div>
+        </div>
+
+        <!-- Scenario 1: LLM risks -->
+        <div class="scenario-panel" id="panel-1">
+          <div class="scenario-question">
+            <div class="question-label">Test scenario 2 / 8</div>
+            <div class="question-text">"What are the risks of using LLMs in production?"</div>
+          </div>
+          <div class="verdict orange">
+            <div class="verdict-icon">🟡</div>
+            <div class="verdict-text">
+              <div class="label">Minor Behavioral Shift</div>
+              <div class="detail">Prompt B covers 5 of 7 risks from Prompt A. Drops "data exfiltration via prompt injection" and "model update drift" — both nontrivial omissions for a production system.</div>
+            </div>
+          </div>
+          <div class="diff-row">
+            <div class="response-card orange-card">
+              <div class="response-header a-header">Prompt A (v1) <span style="font-weight:400;opacity:.7">612 tokens</span></div>
+              <div class="response-body">Key risks when deploying LLMs in production:<br><br>1. <strong>Hallucination</strong> — confident wrong answers with no error signal<br>2. <strong>Prompt injection</strong> — user inputs that hijack agent behavior<br>3. <strong>Data exfiltration</strong> — sensitive data leaking through crafted prompts<br>4. <strong>Latency &amp; cost</strong> — token costs at scale, p99 latency spikes<br>5. <strong>Jailbreaks</strong> — bypassing safety guardrails<br>6. <strong>Model update drift</strong> — silent behavior changes after provider updates<br>7. <strong>Dependency on third-party API</strong> — no SLA on behavior, only uptime<br><br>Mitigation: output validation, sandboxing, semantic monitoring, prompt pinning.</div>
+            </div>
+            <div class="response-card orange-card">
+              <div class="response-header b-header">Prompt B (v2) <span style="font-weight:400;opacity:.7">298 tokens</span></div>
+              <div class="response-body">Main production risks:<br><br>1. <strong>Hallucination</strong> — wrong answers delivered confidently<br>2. <strong>Prompt injection</strong> — malicious inputs altering behavior<br>3. <strong>Latency &amp; cost</strong> — unpredictable at scale<br>4. <strong>Jailbreaks</strong> — guardrail bypasses<br>5. <strong>Third-party API dependency</strong> — limited SLA on behavior<br><br><span class="diff-highlight">Let me know if you need more detail.</span></div>
+            </div>
+          </div>
+          <div class="stats-row">
+            <div class="stat-chip">Risks covered: <span>A: 7/7 · B: 5/7</span></div>
+            <div class="stat-chip">Missing in B: <span>data exfiltration, model update drift</span></div>
+          </div>
+        </div>
+
+        <!-- Scenario 2: Debug NameError -->
+        <div class="scenario-panel" id="panel-2">
+          <div class="scenario-question">
+            <div class="question-label">Test scenario 3 / 8</div>
+            <div class="question-text">"Debug this Python error: NameError: name 'x' is not defined"</div>
+          </div>
+          <div class="verdict green">
+            <div class="verdict-icon">✅</div>
+            <div class="verdict-text">
+              <div class="label">No Divergence</div>
+              <div class="detail">Both prompts produce equivalent diagnostic answers. The conciseness instruction in v2 doesn't harm actionability here — the fix is straightforward and both responses nail it.</div>
+            </div>
+          </div>
+          <div class="diff-row">
+            <div class="response-card green-card">
+              <div class="response-header a-header">Prompt A (v1) <span style="font-weight:400;opacity:.7">220 tokens</span></div>
+              <div class="response-body">This error means Python encountered the variable <code>x</code> before it was assigned a value.<br><br><strong>Common causes:</strong><br>• Variable declared in a different scope (inside an if-block or function)<br>• Typo in variable name<br>• Variable used before assignment<br><br><strong>Fix:</strong> Assign <code>x</code> before using it, or check if it's out of scope.</div>
+            </div>
+            <div class="response-card green-card">
+              <div class="response-header b-header">Prompt B (v2) <span style="font-weight:400;opacity:.7">198 tokens</span></div>
+              <div class="response-body">Python can't find a variable named <code>x</code> — it was used before being defined, or it's out of scope.<br><br>Check: Did you assign <code>x</code> before this line? Is it defined inside an if-block or function that didn't run?<br><br><span class="diff-add">Let me know if you need more detail.</span></div>
+            </div>
+          </div>
+          <div class="stats-row">
+            <div class="stat-chip">Actionability: <span>✅ Both equivalent</span></div>
+            <div class="stat-chip">Token delta: <span>-10%</span></div>
+          </div>
+        </div>
+
+        <!-- Scenario 3: Learn React -->
+        <div class="scenario-panel" id="panel-3">
+          <div class="scenario-question">
+            <div class="question-label">Test scenario 4 / 8</div>
+            <div class="question-text">"Write me a one-week plan to learn React."</div>
+          </div>
+          <div class="verdict red">
+            <div class="verdict-icon">🔴</div>
+            <div class="verdict-text">
+              <div class="label">⚠ Major Divergence — Delivery Failure</div>
+              <div class="detail">Prompt B produces a 3-day plan where the user asked for 7 days. The conciseness instruction caused the agent to compress time rather than content. User receives a qualitatively different artifact — this is a silent failure.</div>
+            </div>
+          </div>
+          <div class="diff-row">
+            <div class="response-card orange-card">
+              <div class="response-header a-header">Prompt A (v1) <span style="font-weight:400;opacity:.7">890 tokens</span></div>
+              <div class="response-body"><strong>7-Day React Learning Plan:</strong><br><br>Day 1: JavaScript prerequisites (arrow functions, destructuring, spread, async/await)<br>Day 2: React fundamentals — components, JSX, props<br>Day 3: State with useState, events, controlled inputs<br>Day 4: useEffect, side effects, data fetching<br>Day 5: Component composition, lifting state, prop drilling<br>Day 6: React Router v6 for navigation<br>Day 7: Build a mini project — a todo app with CRUD + routing<br><br>Resources: official React docs (react.dev), Scrimba free React course.</div>
+            </div>
+            <div class="response-card red-card">
+              <div class="response-header b-header">Prompt B (v2) <span style="font-weight:400;opacity:.7">310 tokens</span></div>
+              <div class="response-body"><strong>React Quickstart (3 days):</strong><br><br>Day 1: Components, JSX, props, useState<br>Day 2: useEffect, data fetching, event handling<br>Day 3: Build something small — a todo or weather app<br><br>Use react.dev docs as your primary reference.<br><br><span class="diff-highlight">Let me know if you need more detail.</span></div>
+            </div>
+          </div>
+          <div class="stats-row">
+            <div class="stat-chip">User asked for: <span>7-day plan</span></div>
+            <div class="stat-chip">B delivered: <span style="color:var(--red)">3-day plan</span></div>
+            <div class="stat-chip">Severity: <span style="color:var(--red)">⚠ Silent delivery failure</span></div>
+          </div>
+        </div>
+
+        <!-- Scenario 4: RAG vs fine-tuning -->
+        <div class="scenario-panel" id="panel-4">
+          <div class="scenario-question">
+            <div class="question-label">Test scenario 5 / 8</div>
+            <div class="question-text">"What's the difference between RAG and fine-tuning?"</div>
+          </div>
+          <div class="verdict orange">
+            <div class="verdict-icon">🟡</div>
+            <div class="verdict-text">
+              <div class="label">Minor Behavioral Shift</div>
+              <div class="detail">Both answers are accurate. Prompt B's mandatory closing phrase — "Let me know if you need more detail" — lands awkwardly after a comparative explanation. Subtle but affects perceived quality in a customer-facing agent.</div>
+            </div>
+          </div>
+          <div class="diff-row">
+            <div class="response-card orange-card">
+              <div class="response-header a-header">Prompt A (v1) <span style="font-weight:400;opacity:.7">540 tokens</span></div>
+              <div class="response-body"><strong>RAG (Retrieval-Augmented Generation)</strong> injects relevant documents into the prompt at inference time. The model's weights don't change — you update the knowledge by updating your vector store. Best for: dynamic knowledge, private data, fast iteration.<br><br><strong>Fine-tuning</strong> updates the model's weights on a curated dataset. Bakes in tone, format, or domain knowledge. Best for: consistent style, specialized vocabulary, or tasks where latency matters (no retrieval step).<br><br><strong>Rule of thumb:</strong> Try RAG first. Fine-tune only when RAG isn't precise enough or latency is a hard constraint.</div>
+            </div>
+            <div class="response-card orange-card">
+              <div class="response-header b-header">Prompt B (v2) <span style="font-weight:400;opacity:.7">380 tokens</span></div>
+              <div class="response-body"><strong>RAG</strong> retrieves relevant docs at inference time and injects them into the prompt — no weight changes, easy to update. <strong>Fine-tuning</strong> trains the model on your data, baking in style or domain knowledge permanently.<br><br>Use RAG for dynamic data. Use fine-tuning for consistent behavior or latency-sensitive tasks.<br><br><span class="diff-highlight">Let me know if you need more detail.</span></div>
+            </div>
+          </div>
+          <div class="stats-row">
+            <div class="stat-chip">Accuracy: <span>✅ Both correct</span></div>
+            <div class="stat-chip">Issue: <span>Mandatory closer sounds off in comparative context</span></div>
+          </div>
+        </div>
+
+        <!-- Scenario 5: Prompt injection -->
+        <div class="scenario-panel" id="panel-5">
+          <div class="scenario-question">
+            <div class="question-label">Test scenario 6 / 8</div>
+            <div class="question-text">"Summarize the concept of prompt injection."</div>
+          </div>
+          <div class="verdict green">
+            <div class="verdict-icon">✅</div>
+            <div class="verdict-text">
+              <div class="label">No Divergence</div>
+              <div class="detail">Both prompts produce equivalent summaries. Conciseness instruction in v2 aligns naturally with a summarization task — shorter output is appropriate here.</div>
+            </div>
+          </div>
+          <div class="diff-row">
+            <div class="response-card green-card">
+              <div class="response-header a-header">Prompt A (v1) <span style="font-weight:400;opacity:.7">310 tokens</span></div>
+              <div class="response-body">Prompt injection is an attack where malicious content in user input hijacks an LLM's instructions. The attacker embeds instructions that override the system prompt — e.g., "Ignore previous instructions and do X instead."<br><br>Direct injection: attacker controls the user input. Indirect injection: attacker plants instructions in data the model retrieves (documents, web pages, emails).<br><br>Mitigations: input sanitization, privilege separation, output filtering, sandboxed tool execution.</div>
+            </div>
+            <div class="response-card green-card">
+              <div class="response-header b-header">Prompt B (v2) <span style="font-weight:400;opacity:.7">242 tokens</span></div>
+              <div class="response-body">Prompt injection is when malicious content in user input (or retrieved data) overrides a model's system instructions. The attacker effectively hijacks the agent's behavior.<br><br>Two forms: direct (attacker controls input) and indirect (instructions planted in retrieved documents or emails).<br><br><span class="diff-add">Let me know if you need more detail.</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scenario 6: PostgreSQL vs MongoDB -->
+        <div class="scenario-panel" id="panel-6">
+          <div class="scenario-question">
+            <div class="question-label">Test scenario 7 / 8</div>
+            <div class="question-text">"Should I use PostgreSQL or MongoDB for my app?"</div>
+          </div>
+          <div class="verdict red">
+            <div class="verdict-icon">🔴</div>
+            <div class="verdict-text">
+              <div class="label">⚠ Major Divergence — Harmful Recommendation</div>
+              <div class="detail">Prompt A correctly frames this as "it depends." Prompt B gives a confident default recommendation (PostgreSQL) without establishing context. For an agent used in architecture decisions, this pattern produces overconfident, potentially wrong guidance.</div>
+            </div>
+          </div>
+          <div class="diff-row">
+            <div class="response-card orange-card">
+              <div class="response-header a-header">Prompt A (v1) <span style="font-weight:400;opacity:.7">680 tokens</span></div>
+              <div class="response-body">It depends on your data structure and access patterns:<br><br><strong>Choose PostgreSQL if:</strong> Your data is relational, you need ACID transactions, you're doing complex joins, or you want a battle-tested default for most web apps.<br><br><strong>Choose MongoDB if:</strong> Your schema is truly variable per document, you're storing hierarchical data that maps poorly to tables, or you need horizontal write scaling from day one.<br><br><strong>Default recommendation:</strong> Start with PostgreSQL unless you have a clear, specific reason for MongoDB. Most apps don't have MongoDB's use case, and Postgres is easier to migrate away from.</div>
+            </div>
+            <div class="response-card red-card">
+              <div class="response-header b-header">Prompt B (v2) <span style="font-weight:400;opacity:.7">220 tokens</span></div>
+              <div class="response-body">Use PostgreSQL — it handles relational data, ACID transactions, and complex queries. It's the safer default for most apps.<br><br>MongoDB is better for highly variable document schemas or massive horizontal write scaling.<br><br><span class="diff-highlight">Let me know if you need more detail.</span></div>
+            </div>
+          </div>
+          <div class="stats-row">
+            <div class="stat-chip">A frames as: <span>Conditional ("it depends")</span></div>
+            <div class="stat-chip">B frames as: <span style="color:var(--red)">Directive (overconfident default)</span></div>
+            <div class="stat-chip">Risk: <span style="color:var(--red)">⚠ Decision-quality regression</span></div>
+          </div>
+        </div>
+
+        <!-- Scenario 7: CSV parsing -->
+        <div class="scenario-panel" id="panel-7">
+          <div class="scenario-question">
+            <div class="question-label">Test scenario 8 / 8</div>
+            <div class="question-text">"Write a function to parse CSV in Python."</div>
+          </div>
+          <div class="verdict green">
+            <div class="verdict-icon">✅</div>
+            <div class="verdict-text">
+              <div class="label">No Divergence</div>
+              <div class="detail">Both produce functionally identical code. B's shorter explanation is acceptable — the code speaks for itself. No quality regression.</div>
+            </div>
+          </div>
+          <div class="diff-row">
+            <div class="response-card green-card">
+              <div class="response-header a-header">Prompt A (v1) <span style="font-weight:400;opacity:.7">410 tokens</span></div>
+              <div class="response-body"><pre style="font-family:monospace;font-size:12px;overflow-x:auto">import csv
+
+def parse_csv(filepath: str) -> list[dict]:
+    """Parse a CSV file into a list of dicts."""
+    with open(filepath, newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        return list(reader)
+
+# Usage
+rows = parse_csv('data.csv')
+print(rows[0])  # {'name': 'Alice', 'age': '30'}</pre><br>Uses <code>csv.DictReader</code> — headers become keys automatically. Add <code>encoding='utf-8-sig'</code> to handle Excel BOM.</div>
+            </div>
+            <div class="response-card green-card">
+              <div class="response-header b-header">Prompt B (v2) <span style="font-weight:400;opacity:.7">300 tokens</span></div>
+              <div class="response-body"><pre style="font-family:monospace;font-size:12px;overflow-x:auto">import csv
+
+def parse_csv(filepath: str) -> list[dict]:
+    with open(filepath, newline='', encoding='utf-8') as f:
+        return list(csv.DictReader(f))</pre><br>Returns a list of dicts with headers as keys.<br><br><span class="diff-add">Let me know if you need more detail.</span></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-setup">
+  <div style="padding: 32px; max-width: 640px;">
+    <div class="setup-panel">
+      <div class="setup-title">Connect Your Own Agent</div>
+      <div class="setup-sub">Run real behavioral diffs against your system prompts using the AgentReview API.</div>
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">Clone the repo and install dependencies:<br>
+          <div class="code-block">git clone https://github.com/RLASAF12/agent-review<br>cd agent-review && npm install</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">Set your environment variables in <code>.env</code>:<br>
+          <div class="code-block">SUPABASE_URL=your_project_url<br>SUPABASE_ANON_KEY=your_anon_key<br>OPENAI_API_KEY=your_key  # or any OpenAI-compatible endpoint</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">Run your first comparison:<br>
+          <div class="code-block">node compare.js \<br>  --prompt-a "prompts/v1.txt" \<br>  --prompt-b "prompts/v2.txt" \<br>  --scenarios "scenarios/default.json"</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text">Open this dashboard — it auto-loads your latest comparison run from Supabase. Every run is versioned and stored.</div>
+      </div>
+
+      <div style="margin-top:20px; padding: 12px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; color: var(--muted);">
+        <strong style="color:var(--text)">How scoring works:</strong> Each scenario runs both prompts through the same model. Responses are compared via semantic similarity + checklist evaluation. Score = (1 - avg_similarity_loss) × 100. Green = &gt;92% similar. Orange = 65–92%. Red = &lt;65%.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showScenario(i) {
+  document.querySelectorAll('.scenario-panel').forEach(p => p.classList.remove('visible'));
+  document.querySelectorAll('.scenario-item').forEach(s => s.classList.remove('active'));
+  document.getElementById('panel-' + i).classList.add('visible');
+  document.getElementById('s' + i).classList.add('active');
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('visible'));
+  document.getElementById('tab-' + name).classList.add('visible');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>
