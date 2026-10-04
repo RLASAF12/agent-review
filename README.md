@@ -1,3 +1,5 @@
+> **Archived.** This repo moved to [RLASAF12/agent-guardrails](https://github.com/RLASAF12/agent-guardrails/tree/main/agent-review) (folder `agent-review/`, full history preserved). Archived 2026-10-04.
+
 # AgentReview
 
 **Behavioral diff for system prompt changes.**
